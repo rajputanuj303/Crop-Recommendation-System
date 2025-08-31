@@ -1,0 +1,11 @@
+/* Basic styles for App */
+body {
+  font-family: Arial, sans-serif;
+  background: #f8fafc;
+  margin: 0;
+  padding: 0;
+}
+
+.App {
+  min-height: 100vh;
+}
