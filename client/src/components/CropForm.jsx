@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { FaMapMarkerAlt, FaSeedling, FaCloudSunRain, FaInfoCircle } from 'react-icons/fa';
 
 const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, weather, weatherLoading, weatherError }) => {
+  const { t } = useTranslation();
   const [formData, setFormData] = useState({
     N: '',
     P: '',
@@ -17,9 +19,24 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
 
   const [locationLoading, setLocationLoading] = useState(false);
   const [locationError, setLocationError] = useState('');
+  const [debounceTimer, setDebounceTimer] = useState(null);
 
   useEffect(() => {
-    setFormData((prev) => ({ ...prev, latitude: latitude || '', longitude: longitude || '' }));
+    const updateFormLocation = async () => {
+      if (latitude && longitude) {
+        // Get location name for coordinates coming from external sources (like map clicks)
+        const locationName = await getLocationName(latitude, longitude);
+        setFormData((prev) => ({ 
+          ...prev, 
+          latitude: latitude || '', 
+          longitude: longitude || '',
+          locationName: locationName || prev.locationName
+        }));
+      } else {
+        setFormData((prev) => ({ ...prev, latitude: latitude || '', longitude: longitude || '' }));
+      }
+    };
+    updateFormLocation();
   }, [latitude, longitude]);
 
   useEffect(() => {
@@ -33,17 +50,100 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
     }
   }, [weather, weatherLoading, weatherError]);
 
-  const handleChange = (e) => {
+  const handleChange = async (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
       [name]: value
     }));
-    if ((name === 'latitude' || name === 'longitude') && onLocationChange) {
-      onLocationChange({
-        latitude: name === 'latitude' ? value : formData.latitude,
-        longitude: name === 'longitude' ? value : formData.longitude
-      });
+    
+    // Auto-fill location name when coordinates are manually entered
+    if ((name === 'latitude' || name === 'longitude')) {
+      const newLat = name === 'latitude' ? value : formData.latitude;
+      const newLng = name === 'longitude' ? value : formData.longitude;
+      
+      if (onLocationChange) {
+        onLocationChange({
+          latitude: newLat,
+          longitude: newLng
+        });
+      }
+      
+      // Clear previous timer
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+      }
+      
+      // Set new timer for location name lookup (debounced to avoid too many API calls)
+      if (newLat && newLng && !isNaN(newLat) && !isNaN(newLng)) {
+        const timer = setTimeout(async () => {
+          const locationName = await getLocationName(newLat, newLng);
+          if (locationName) {
+            setFormData(prev => ({
+              ...prev,
+              locationName: locationName
+            }));
+          }
+        }, 1500); // Wait 1.5 seconds after user stops typing
+        
+        setDebounceTimer(timer);
+      }
+    }
+  };
+
+  const getLocationName = async (lat, lng) => {
+    try {
+      // Using OpenStreetMap Nominatim API for reverse geocoding (free)
+      // Using zoom=18 for more detailed results including villages
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1&extratags=1`
+      );
+      const data = await response.json();
+      
+      if (data && data.address) {
+        const address = data.address;
+        let locationParts = [];
+        
+        // Priority order for locality: village > hamlet > suburb > neighbourhood > town > city
+        const locality = address.village || 
+                         address.hamlet || 
+                         address.suburb || 
+                         address.neighbourhood || 
+                         address.town || 
+                         address.city;
+        
+        if (locality) {
+          locationParts.push(locality);
+        }
+        
+        // Add district/county level
+        const district = address.state_district || 
+                        address.county || 
+                        address.district;
+        
+        if (district && district !== locality) {
+          locationParts.push(district);
+        }
+        
+        // Add state/province
+        const state = address.state || address.province;
+        if (state) {
+          locationParts.push(state);
+        }
+        
+        // Add country for international locations
+        if (address.country && address.country !== 'India') {
+          locationParts.push(address.country);
+        }
+        
+        // Join with commas, or fallback to display_name
+        return locationParts.length > 0 ? locationParts.join(', ') : 
+               (data.display_name ? data.display_name.split(',').slice(0, 3).join(', ') : '');
+      }
+      return '';
+    } catch (error) {
+      console.warn('Failed to get location name:', error);
+      return '';
     }
   };
 
@@ -52,34 +152,47 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
     setLocationError('');
 
     if (!navigator.geolocation) {
-      setLocationError('Geolocation is not supported by this browser.');
+      setLocationError(t('Geolocation is not supported by this browser.'));
       setLocationLoading(false);
       return;
     }
 
     navigator.geolocation.getCurrentPosition(
-      (position) => {
+      async (position) => {
+        const lat = position.coords.latitude.toFixed(6);
+        const lng = position.coords.longitude.toFixed(6);
+        
+        // Get location name automatically
+        const locationName = await getLocationName(lat, lng);
+        
         setFormData(prev => ({
           ...prev,
-          latitude: position.coords.latitude.toFixed(6),
-          longitude: position.coords.longitude.toFixed(6)
+          latitude: lat,
+          longitude: lng,
+          locationName: locationName
         }));
+        
+        // Also update parent component with new coordinates
+        if (onLocationChange) {
+          onLocationChange({ latitude: lat, longitude: lng });
+        }
+        
         setLocationLoading(false);
       },
       (error) => {
-        let errorMessage = 'Unable to retrieve your location.';
+    let errorMessage = t('Unable to retrieve your location.');
         switch (error.code) {
           case error.PERMISSION_DENIED:
-            errorMessage = 'Location access was denied. Please enable location services.';
+      errorMessage = t('Location access was denied. Please enable location services.');
             break;
           case error.POSITION_UNAVAILABLE:
-            errorMessage = 'Location information is unavailable.';
+      errorMessage = t('Location information is unavailable.');
             break;
           case error.TIMEOUT:
-            errorMessage = 'Location request timed out.';
+      errorMessage = t('Location request timed out.');
             break;
           default:
-            errorMessage = 'An unknown error occurred while getting location.';
+      errorMessage = t('An unknown error occurred while getting location.');
         }
         setLocationError(errorMessage);
         setLocationLoading(false);
@@ -97,7 +210,7 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
 
     // Validate location data
     if (!formData.latitude || !formData.longitude) {
-      setLocationError('Please provide location coordinates (use GPS or enter manually)');
+      setLocationError(t('Please provide location coordinates (use GPS or enter manually)'));
       return;
     }
 
@@ -106,12 +219,12 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
     const lng = parseFloat(formData.longitude);
 
     if (lat < -90 || lat > 90) {
-      setLocationError('Latitude must be between -90 and 90 degrees');
+      setLocationError(t('Latitude must be between -90 and 90 degrees'));
       return;
     }
 
     if (lng < -180 || lng > 180) {
-      setLocationError('Longitude must be between -180 and 180 degrees');
+      setLocationError(t('Longitude must be between -180 and 180 degrees'));
       return;
     }
 
@@ -122,11 +235,11 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
   return (
     <div className="max-w-lg mx-auto bg-white rounded-2xl shadow-2xl p-8 border border-green-100 animate-fade-in">
       <h2 className="text-3xl font-extrabold text-green-700 mb-8 text-center flex items-center justify-center gap-2">
-        <FaSeedling className="text-green-500" /> Crop Recommendation
+        <FaSeedling className="text-green-500" /> {t('Crop Recommendation')}
       </h2>
       <form onSubmit={handleSubmit} className="space-y-8">
         {weatherLoading && (
-          <div className="mb-4 text-blue-700 text-center text-sm">Fetching weather data for your location...</div>
+          <div className="mb-4 text-blue-700 text-center text-sm">{t('Fetching weather data for your location...')}</div>
         )}
         {weatherError && (
           <div className="mb-4 text-red-600 text-center text-sm">{weatherError}</div>
@@ -134,7 +247,7 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
         {/* Location Section */}
         <div className="bg-green-50 rounded-xl p-6 shadow-sm border border-green-100 mb-2">
           <h3 className="text-lg font-bold text-green-700 mb-4 flex items-center gap-2">
-            <FaMapMarkerAlt className="text-green-400" /> Location Information
+            <FaMapMarkerAlt className="text-green-400" /> {t('Location Information')}
           </h3>
           {/* GPS Button */}
           <div className="mb-4">
@@ -150,12 +263,12 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
-                  Getting Location...
+                  {t('Getting Location...')}
                 </>
               ) : (
                 <>
                   <FaMapMarkerAlt className="w-5 h-5 mr-2" />
-                  Use Current GPS Location
+                  {t('Use Current GPS Location')}
                 </>
               )}
             </button>
@@ -164,7 +277,7 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-green-700 mb-1 flex items-center gap-1">
-                Latitude <FaInfoCircle title="-90 to 90" className="text-gray-400" />
+                {t('Latitude')} <FaInfoCircle title="-90 to 90" className="text-gray-400" />
               </label>
               <input
                 type="number"
@@ -179,7 +292,7 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
             </div>
             <div>
               <label className="block text-sm font-medium text-green-700 mb-1 flex items-center gap-1">
-                Longitude <FaInfoCircle title="-180 to 180" className="text-gray-400" />
+                {t('Longitude')} <FaInfoCircle title="-180 to 180" className="text-gray-400" />
               </label>
               <input
                 type="number"
@@ -196,7 +309,7 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
           {/* Location Name (Optional) */}
           <div className="mt-4">
             <label className="block text-sm font-medium text-green-700 mb-1">
-              Location Name (Optional)
+              {t('Location Name (Optional)')}
             </label>
             <input
               type="text"
@@ -217,12 +330,12 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
         {/* Soil Parameters Section */}
         <div className="bg-yellow-50 rounded-xl p-6 shadow-sm border border-yellow-100 mb-2">
           <h3 className="text-lg font-bold text-yellow-700 mb-4 flex items-center gap-2">
-            <FaSeedling className="text-yellow-500" /> Soil Parameters
+            <FaSeedling className="text-yellow-500" /> {t('Soil Parameters')}
           </h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-yellow-700 mb-1 flex items-center gap-1">
-                Nitrogen (N)
+                {t('Nitrogen (N)')}
                 <FaInfoCircle title="kg/ha (0-140)" className="text-gray-400" />
               </label>
               <input
@@ -237,7 +350,7 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
             </div>
             <div>
               <label className="block text-sm font-medium text-yellow-700 mb-1 flex items-center gap-1">
-                Phosphorus (P)
+                {t('Phosphorus (P)')}
                 <FaInfoCircle title="kg/ha (5-145)" className="text-gray-400" />
               </label>
               <input
@@ -252,7 +365,7 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
             </div>
             <div>
               <label className="block text-sm font-medium text-yellow-700 mb-1 flex items-center gap-1">
-                Potassium (K)
+                {t('Potassium (K)')}
                 <FaInfoCircle title="kg/ha (5-205)" className="text-gray-400" />
               </label>
               <input
@@ -267,7 +380,7 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
             </div>
             <div>
               <label className="block text-sm font-medium text-yellow-700 mb-1 flex items-center gap-1">
-                pH Level
+                {t('pH Level')}
                 <FaInfoCircle title="3.5-10.0" className="text-gray-400" />
               </label>
               <input
@@ -286,12 +399,12 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
         {/* Climate Parameters Section */}
         <div className="bg-blue-50 rounded-xl p-6 shadow-sm border border-blue-100 mb-2">
           <h3 className="text-lg font-bold text-blue-700 mb-4 flex items-center gap-2">
-            <FaCloudSunRain className="text-blue-400" /> Climate Parameters
+            <FaCloudSunRain className="text-blue-400" /> {t('Climate Parameters')}
           </h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-blue-700 mb-1 flex items-center gap-1">
-                Temperature (°C)
+                {t('Temperature (°C)')}
                 <FaInfoCircle title="8.8-43.7" className="text-gray-400" />
               </label>
               <input
@@ -306,7 +419,7 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
             </div>
             <div>
               <label className="block text-sm font-medium text-blue-700 mb-1 flex items-center gap-1">
-                Humidity (%)
+                {t('Humidity (%)')}
                 <FaInfoCircle title="14-100" className="text-gray-400" />
               </label>
               <input
@@ -321,7 +434,7 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
             </div>
             <div className="col-span-2">
               <label className="block text-sm font-medium text-blue-700 mb-1 flex items-center gap-1">
-                Rainfall (mm)
+                {t('Rainfall (mm)')}
                 <FaInfoCircle title="20-300" className="text-gray-400" />
               </label>
               <input
@@ -347,11 +460,11 @@ const CropForm = ({ onSubmit, loading, latitude, longitude, onLocationChange, we
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              Getting Recommendation...
+              {t('Processing...')}
             </>
           ) : (
             <>
-              <FaSeedling className="w-5 h-5 mr-2" /> Get Recommendation
+              <FaSeedling className="w-5 h-5 mr-2" /> {t('Get Recommendation')}
             </>
           )}
         </button>

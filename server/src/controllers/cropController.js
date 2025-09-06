@@ -194,8 +194,8 @@ const getRecommendationById = async (req, res) => {
       return res.status(404).json({ message: 'Recommendation not found' });
     }
 
-    // Check if user owns this recommendation or is admin
-    if (recommendation.userId.toString() !== req.user.id && req.user.role !== 'admin') {
+    // Check if user owns this recommendation
+    if (recommendation.userId.toString() !== req.user.id) {
       return res.status(403).json({ message: 'Not authorized' });
     }
 
@@ -204,45 +204,6 @@ const getRecommendationById = async (req, res) => {
   } catch (error) {
     console.error('Get recommendation error:', error);
     res.status(500).json({ message: 'Failed to get recommendation' });
-  }
-};
-
-// @desc    Get all recommendations (Admin only)
-// @route   GET /api/crops/admin/all
-// @access  Private/Admin
-const getAllRecommendations = async (req, res) => {
-  try {
-    const { page = 1, limit = 20, crop, status, startDate, endDate } = req.query;
-
-    const query = {};
-    if (crop) query.crop = { $regex: crop, $options: 'i' };
-    if (status) query.status = status;
-    if (startDate || endDate) {
-      query.createdAt = {};
-      if (startDate) query.createdAt.$gte = new Date(startDate);
-      if (endDate) query.createdAt.$lte = new Date(endDate);
-    }
-
-    const recommendations = await Recommendation.find(query)
-      .populate('userId', 'name email')
-      .populate('soilInputId', 'N P K temperature humidity ph rainfall')
-      .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .exec();
-
-    const total = await Recommendation.countDocuments(query);
-
-    res.json({
-      recommendations,
-      totalPages: Math.ceil(total / limit),
-      currentPage: parseInt(page),
-      total
-    });
-
-  } catch (error) {
-    console.error('Get all recommendations error:', error);
-    res.status(500).json({ message: 'Failed to get recommendations' });
   }
 };
 
@@ -257,8 +218,8 @@ const deleteRecommendation = async (req, res) => {
       return res.status(404).json({ message: 'Recommendation not found' });
     }
 
-    // Check if user owns this recommendation or is admin
-    if (recommendation.userId.toString() !== req.user.id && req.user.role !== 'admin') {
+    // Check if user owns this recommendation
+    if (recommendation.userId.toString() !== req.user.id) {
       return res.status(403).json({ message: 'Not authorized' });
     }
 
@@ -275,6 +236,5 @@ module.exports = {
   getCropRecommendation,
   getRecommendationHistory,
   getRecommendationById,
-  getAllRecommendations,
   deleteRecommendation,
 };

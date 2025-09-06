@@ -9,6 +9,9 @@ require('dotenv').config();
 // Import routes
 const authRoutes = require('./routes/authRoutes');
 const cropRoutes = require('./routes/cropRoutes');
+const farmAIRoutes = require('./routes/farmAIRoutes');
+const priceRoutes = require('./routes/priceRoutes');
+const cedaRoutes = require('./routes/cedaRoutes');
 
 // Initialize express app
 const app = express();
@@ -16,12 +19,29 @@ const app = express();
 // Connect to MongoDB
 connectDB();
 
+// Disable ETag for API responses to avoid 304 interfering with dynamic data
+app.set('etag', false);
+
 // Security middleware
 app.use(helmet());
 
-// CORS configuration
+// CORS configuration (support both 3000 and 3001 during dev, plus 127.0.0.1)
+const defaultFrontend = process.env.FRONTEND_URL || 'http://localhost:3000';
+const allowedOrigins = new Set([
+  defaultFrontend,
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001'
+]);
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // allow non-browser clients
+    if (allowedOrigins.has(origin)) return callback(null, true);
+    if (/^http:\/\/(localhost|127\.0\.0\.1):30\d{2}$/.test(origin)) return callback(null, true);
+    return callback(new Error(`Not allowed by CORS: ${origin}`));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -31,7 +51,15 @@ app.use(cors({
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => {
+    // Allow metadata GETs and health checks without throttling
+    if (req.method === 'GET' && /^\/api\/ceda\/(commodities|geographies)/.test(req.originalUrl)) return true;
+    if (req.path === '/health') return true;
+    return false;
+  }
 });
 app.use('/api/', limiter);
 
@@ -57,6 +85,9 @@ app.get('/health', (req, res) => {
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/crops', cropRoutes);
+app.use('/api/farmai', farmAIRoutes);
+app.use('/api/prices', priceRoutes);
+app.use('/api/ceda', cedaRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -66,6 +97,7 @@ app.get('/', (req, res) => {
     endpoints: {
       auth: '/api/auth',
       crops: '/api/crops',
+  prices: '/api/prices',
       health: '/health'
     }
   });

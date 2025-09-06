@@ -5,7 +5,10 @@ import MapView from '../components/MapView';
 import { getCropRecommendation } from '../api';
 import { fetchWeatherForLocation } from '../utils/fetchWeatherForLocation';
 
+import { useTranslation } from 'react-i18next';
+
 const Home = () => {
+  const { t } = useTranslation();
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -48,6 +51,18 @@ const Home = () => {
     }
   };
 
+  const handleLocationChange = (newLocation) => {
+    setLocation(newLocation);
+  };
+
+  const handleMapLocationChange = async (pos) => {
+    const newLocation = { 
+      latitude: pos.lat.toFixed(6), 
+      longitude: pos.lng.toFixed(6) 
+    };
+    setLocation(newLocation);
+  };
+
   const handleReset = () => {
     setResult(null);
     setError(null);
@@ -57,10 +72,10 @@ const Home = () => {
     <div className="min-h-screen bg-gradient-to-br from-green-100 to-blue-100 flex flex-col items-center py-8 px-2">
       <div className="w-full max-w-xl mx-auto flex flex-col items-center">
         <h1 className="text-3xl md:text-4xl font-extrabold text-green-700 mb-2 text-center">
-          🌱 Crop Recommendation
+          🌱 {t('Crop Recommendation')}
         </h1>
         <p className="text-base md:text-lg text-gray-700 mb-6 text-center max-w-md">
-          Get the best crop suggestions for your field. Enter your soil and weather details, or use your location for a quick start.
+          {t('Get personalized crop recommendations based on soil and climate conditions')}
         </p>
         <div className="w-full bg-white rounded-2xl shadow-lg p-4 md:p-8 mb-6">
           <CropForm
@@ -68,7 +83,7 @@ const Home = () => {
             loading={loading}
             latitude={location.latitude}
             longitude={location.longitude}
-            onLocationChange={setLocation}
+            onLocationChange={handleLocationChange}
             weather={weather}
             weatherLoading={weatherLoading}
             weatherError={weatherError}
@@ -81,11 +96,11 @@ const Home = () => {
         </div>
         <div className="w-full mb-6">
           <h2 className="text-lg font-semibold text-green-700 mb-2 text-center">
-            Select Your Location
+            {t('Select Your Location')}
           </h2>
           <div className="rounded-xl overflow-hidden shadow-md">
             <MapView
-              setPosition={(pos) => setLocation({ latitude: pos.lat.toFixed(6), longitude: pos.lng.toFixed(6) })}
+              setPosition={handleMapLocationChange}
               position={location.latitude && location.longitude ? [parseFloat(location.latitude), parseFloat(location.longitude)] : null}
             />
           </div>
